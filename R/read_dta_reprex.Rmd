@@ -36,17 +36,17 @@ if (!dir.exists(paste0(wd, "/", "data"))) dir.create(paste0(wd, "/", "data"))
 
 # Harmonization
 
-We'll use retroharmonize version 0.1.19 to catch the new `read_dta()` function.
+We'll use retroharmonize version 0.1.19 to catch the new `read_dta()` function. 
 
 ```{r, echo=FALSE}
-devtools::install_github("rOpenGov/retroharmonize")
+if (FALSE) {devtools::install_github("rOpenGov/retroharmonize")}
 ```
 
 From here, we'll roughly follow the Eurobarometer vignette.
 
 ## Importing the Files
 
-```{r}
+```{r, echo=FALSE}
 library(retroharmonize)
 library(dplyr)
 library(tidyr)
@@ -79,6 +79,8 @@ cs_wave3 <- haven::read_dta(file = ind_covidshocks_rounds[5],
                             encoding = "latin1")
 ```
 
+#### Passing the encoding arguement
+
 Works great. Now we'll have to specify the encoding in read_dta within `read_surveys()` and then pass this on to `read_dta()`--- this is admittedly beyond my R knowledge.
 
 ```{r}
@@ -87,6 +89,29 @@ Works great. Now we'll have to specify the encoding in read_dta within `read_sur
 ```
 
 I'm not sure how much of an issue encodings are with SPSS but, as it's is not uncommon even for users of newer Stata versions to write to older file types for "compatibility", it may be worth considering if it's possible to incorporate the `encoding` argument somehow. Maybe there was discussion of this for the code of retroharmonize::read_dta around \~55-60? I'm absolutely willing to ask around for ideas on my end if needed. Sorry, I know this was supposed to be about missing values and for many users this won't arise -- it just happens that this dataset prompted the encoding argument question and it may be something to consider. Again, happy to help on this.
+
+Now I'm wondering if we can specify this in the `read_surveys()` function directly
+
+```{r}
+covidshocks_waves <- read_surveys(ind_covidshocks_rounds,
+                                  .f = haven::read_dta(ind_covidshocks_rounds,
+                                                       encoding = "latin1"))
+```
+
+Huh, looks like this an error from haven?
+
+```{r}
+covidshocks_waves <- read_surveys(ind_covidshocks_rounds,
+                                  .f = haven::read_dta(ind_covidshocks_rounds, encoding = "latin1"))
+```
+
+We can see from the reprex that the error message is indeed from haven, so this makes me think that maybe the encoding argument was not successfully passed here. I'm probably mis-specifying the call.
+
+```{r}
+reprex::reprex(haven::read_dta, venue = "r")
+```
+
+In the end, I can't figure out how to pass this encoding argument to `read_surveys()`. If I'm understanding the code of read_surveys and rh::read_dta correctly, couldn't an "encoding" argument in theory be included in a function at either of these points? I think this is a strategic question for you all: do you want to pass it along via retroharmonize::read_dta and then read_surveys or allow the argument to passed via haven as an external function directly called in read_surveys? Again, this is all assuming I'm reading this correctly. 
 
 ### Export to dta (version 14)
 
@@ -97,8 +122,8 @@ if (!dir.exists(paste0(wd, "/", "data/version_14"))) dir.create(paste0(wd, "/", 
 ind_dir_14 <- file.path(wd, "data/version_14")
 
 haven::write_dta(cs_wave1, file.path(ind_dir_14, cs[1]), version = 14)
-haven::write_dta(cs_wave1, file.path(ind_dir_14, cs[3]), version = 14)
-haven::write_dta(cs_wave1, file.path(ind_dir_14, cs[5]), version = 14)
+haven::write_dta(cs_wave2, file.path(ind_dir_14, cs[3]), version = 14)
+haven::write_dta(cs_wave3, file.path(ind_dir_14, cs[5]), version = 14)
 
 ```
 
