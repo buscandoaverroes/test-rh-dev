@@ -1,9 +1,13 @@
 # Start by ignoring everything then allowing by case
 *
 
+
 # GitHub settings
 !.gitignore
 !.gitattributes
+
+# check contents of folders
+!*/
 
 # Documentation 
 !README.md
