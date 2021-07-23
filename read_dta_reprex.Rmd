@@ -1,0 +1,324 @@
+---
+title: "Retroharmonize::read_dta() Reprex"
+author: "Tom"
+date: "7/21/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(error = TRUE)
+wd <- "/Volumes/Reprex/rh_reprex" # change this to your directory
+# note, not setting wd() in Rmd because I think it gets reset after each chunk
+```
+
+# Introduction
+
+Given its fantastic metadata and harmonization functions, the `retroharmonize` package has already proved an essential part of my workflow. But many of the raw files are only available in .dta format, so this markdown is designed to test the newly-created `read_dta` function with complex, public data.
+
+# Data for the Reprex/Exploration
+
+I've chosen a High Frequency Phone Survey in India, with three rounds, conducted by the World Bank. The data are available as open-access at the link in below in the citation in Stata, SPSS, and CSV format. The authors of the data request that users be mindful of the citation requirements in the Access Policy.
+
+# Setup
+
+You will need to agree to the terms to download the data from the link in the citation -- but no account is required. Chose the Stata link; the data arrive in a zip file.
+
+## Directories and files
+
+First, set the root path in the object `wd`
+
+Then the code will create a `/data` sub-directory. In here, manually move the folder of .dta files that comes after unzipping the file from above.
+
+```{r}
+if (!dir.exists(paste0(wd, "/", "data"))) dir.create(paste0(wd, "/", "data"))
+```
+
+# Harmonization
+
+We'll use retroharmonize version 0.1.19 to catch the new `read_dta()` function.
+
+```{r, echo=FALSE}
+devtools::install_github("rOpenGov/retroharmonize")
+```
+
+From here, we'll roughly follow the Eurobarometer vignette.
+
+## Importing the Files
+
+```{r}
+library(retroharmonize)
+library(dplyr)
+library(tidyr)
+```
+
+Note that in this case there seems to be an error in reading the .dta files.
+
+```{r}
+ind_dir <- file.path(wd, "data/IND_2020_COVIDRS_v01_M_STATA12")
+cs <- dir(ind_dir)
+ind_covidshocks_rounds <- file.path(ind_dir, cs)
+
+covidshocks_waves <- read_surveys(ind_covidshocks_rounds, .f = 'read_dta')
+```
+
+Let's see if haven has a problem with them
+
+```{r}
+cs_wave1 <- haven::read_dta(file = ind_covidshocks_rounds[1])
+```
+
+Ah, it is with haven. It's because I think these files are in Stata 12 format, and in the help file, we see that haven wants us to specify the encoding as "latin1" for .dta files earlier than 14.
+
+```{r}
+cs_wave1 <- haven::read_dta(file = ind_covidshocks_rounds[1],
+                            encoding = "latin1")
+cs_wave2 <- haven::read_dta(file = ind_covidshocks_rounds[3],
+                            encoding = "latin1")
+cs_wave3 <- haven::read_dta(file = ind_covidshocks_rounds[5],
+                            encoding = "latin1")
+```
+
+Works great. Now we'll have to specify the encoding in read_dta within `read_surveys()` and then pass this on to `read_dta()`--- this is admittedly beyond my R knowledge.
+
+```{r}
+#covidshocks_waves <- read_surveys(ind_covidshocks_rounds, .f = 'read_dta',
+                                  # somehow declare encoding?)
+```
+
+I'm not sure how much of an issue encodings are with SPSS but, as it's is not uncommon even for users of newer Stata versions to write to older file types for "compatibility", it may be worth considering if it's possible to incorporate the `encoding` argument somehow. Maybe there was discussion of this for the code of retroharmonize::read_dta around \~55-60? I'm absolutely willing to ask around for ideas on my end if needed. Sorry, I know this was supposed to be about missing values and for many users this won't arise -- it just happens that this dataset prompted the encoding argument question and it may be something to consider. Again, happy to help on this.
+
+### Export to dta (version 14)
+
+Since we're here, let's save the three waves of interest as .dta version 14 files, so that read_dta can import them without additional arguments.
+
+```{r, echo=FALSE}
+if (!dir.exists(paste0(wd, "/", "data/version_14"))) dir.create(paste0(wd, "/", "data/version_14"))
+ind_dir_14 <- file.path(wd, "data/version_14")
+
+haven::write_dta(cs_wave1, file.path(ind_dir_14, cs[1]), version = 14)
+haven::write_dta(cs_wave1, file.path(ind_dir_14, cs[3]), version = 14)
+haven::write_dta(cs_wave1, file.path(ind_dir_14, cs[5]), version = 14)
+
+```
+
+### Read Surveys as .dta 14
+
+```{r}
+cs_14 <- dir(ind_dir_14)
+ind_covidshocks_rounds_14 <- file.path(ind_dir_14, cs_14)
+
+covidshocks_waves_14 <- read_surveys(ind_covidshocks_rounds_14, .f = 'read_dta')
+```
+
+Success! Now we let's make our metadata file and proceed to NA values with our three processed rounds.
+
+```{r}
+attr(covidshocks_waves_14[[1]], "id") <- "IND_CovidShocks_R1"
+attr(covidshocks_waves_14[[2]], "id") <- "IND_CovidShocks_R2"
+attr(covidshocks_waves_14[[3]], "id") <- "IND_CovidShocks_R3"
+```
+
+```{r}
+cs_metadata <- lapply(X = covidshocks_waves_14, FUN = metadata_create)
+cs_metadata <- do.call(rbind, cs_metadata)
+```
+
+## Missing Values
+
+It's common for coders writing for Stata to not use the extended missing values (`.a` `.b`) and instead simply include "Missing", "No response" etc values in valid numerical ranges than could be confused with valid values.
+
+### Label Exploration
+
+Let's look at how the survey marks missings, do-not-respond's etc. by looking at a (simple) subset of variables.
+
+```{r}
+to_analyze <- cs_metadata %>%
+  filter( var_name_orig %in% c("agr_prc_yr_unit", "agr_sell_lckdwn", 
+                               "con_curr_rice", "rowid")) 
+          
+collect_na_labels(cs_metadata)
+```
+
+We see there are no system NA labels for any variable at all, but, as expected, they're in the labelled factor data.
+
+```{r}
+to_analyze %>% 
+  filter( grepl("unit", var_name_orig)) %>%
+  collect_val_labels()
+```
+
+in some of the data I work with, these value labels change across waves. That is, "Don't Know" may be `-999` one round and `-9` the next. So I often transform the metadata file like this for visual checks.
+
+```{r}
+unit_table <- to_analyze %>%
+  filter( grepl("unit", var_name_orig) ) %>%
+  filter(!is.na(labels)) %>%
+  select(id, labels) %>%
+  unnest_longer(labels, 
+                values_to = "value",
+                indices_to = "value_label") %>%
+  pivot_wider(names_from = id, values_from = value_label) %>%
+  arrange(value)
+
+unit_table
+```
+
+We also see the same Missing/non-response values for the other factor variable, except the exclusion of "99 Other"
+
+```{r}
+sell_table <- to_analyze %>%
+  filter( grepl("sell", var_name_orig) ) %>%
+  filter(!is.na(labels)) %>%
+  select(id, labels) %>%
+  unnest_longer(labels, 
+                values_to = "value",
+                indices_to = "value_label") %>%
+  pivot_wider(names_from = id, values_from = value_label) %>%
+  arrange(value)
+
+sell_table
+```
+
+As I understand, a major goal of `retorharmonize` is to create a separation between values that should and should not be included in numerical calculations -- such as means.
+
+Continuing with the harmonization to achieve the NA label classification.
+
+```{r}
+to_analyze <- to_analyze %>%
+  mutate(
+    var_label = var_label_normalize(label_orig),
+    var_label = case_when( grepl("rowid", var_name_orig) ~ "unique_id",
+                TRUE ~ var_label),
+    var_name = val_label_normalize(var_name_orig)
+  )
+
+merged_cs <- merge_waves(waves = covidshocks_waves_14, 
+                         var_harmonization = to_analyze)
+
+```
+
+### Label Functions + `harmonize_waves()`
+
+Adjusting the prototype function for "unit"
+
+```{r}
+harmonize_cs_unit <- function(x) {
+  label_list <- list(
+    from = c("^kilo", "^quin", "^mann", "^other",
+             "^Don't", "^Refused", "^Half"),
+    to = c("kilos", "quintal", "mann", "other",
+           "do_not_know", "refused", "incomplete"),
+  numeric_values = c(1, 2, 3, 4,
+                     99997, 99998, 99999)
+  )
+
+  harmonize_values(
+    x,
+    harmonize_labels = label_list,
+    na_values = c("do_not_know" = 99997,
+                  "refused" = 99998,
+                  "incomplete" = 99999)
+  )
+}
+
+
+harmonize_cs_sell <- function(x) {
+  label_list <- list(
+    from = c("^all", "^more", "^less", "^none",
+             "^Don't", "^Refused", "^Half"),
+    to = c("all", "more", "less", "none",
+           "do_not_know", "refused", "incomplete"),
+  numeric_values = c(1, 2, 3, 4,
+                     99997, 99998, 99999)
+  )
+
+  harmonize_values(
+    x,
+    harmonize_labels = label_list,
+    na_values = c("do_not_know" = 99997,
+                  "refused" = 99998,
+                  "incomplete" = 99999)
+  )
+}
+
+
+```
+
+Not harmonizing the "sell" variable for simplicity.
+
+```{r}
+harmonized_cs_waves_A <- harmonize_waves(
+  waves = lapply(merged_cs, function(x) x %>%
+                   select(-.data$agr_sell_lckdwn)),
+  .f = harmonize_cs_unit
+)
+```
+
+It looks like the harmonize_cs_unit function didn't succeed in labeling the data properly. The data in the "unit" variable end up as not labelled. Can we simplify the function to get it to work?
+
+```{r}
+unit_labels <- to_analyze %>%
+  filter(grepl("unit", var_name_orig)) %>%
+  collect_val_labels()
+
+harmonize_cs_unit_simple <- function(x) {
+  label_list <- list(
+    from = c("Don't know", "Refused to resposnd", "Half complete",
+             "Kilos", "Quintal", "Mann", "Other"),
+    
+    to = c("do_not_know", "refused", "incomplete",
+           "kilos", "quintal", "mann", "other"),
+    
+  numeric_values = c(9997, 9998, 9999,
+                     1, 2, 3, 4)
+  )
+
+  harmonize_values(
+    x,
+    harmonize_labels = label_list,
+    na_values = c("do_not_know" = 9997,
+                  "refused" = 9998,
+                  "incomplete" = 9999)
+  )
+}
+
+```
+
+```{r}
+harmonized_cs_waves_B <- harmonize_waves(
+  waves = lapply(merged_cs, function(x) x %>%
+                   select(-.data$agr_sell_lckdwn)),
+  .f = harmonize_cs_unit_simple
+)
+```
+
+There's no warning but I can't figure out why the harmonize_wave function didn't transform the raw values -- still we have unlabeled data with the original values. I'm probably not specifying or using something correctly.
+
+Just for fun, if we look at the class of the labelled variable, I think we see that retroharmonize added it's labelled class to it.
+
+```{r}
+class(harmonized_cs_waves_B$agr_prc_yr_unit)
+```
+
+But `document_survey_item()` still finds the labels.
+
+```{r}
+document_survey_item(harmonized_cs_waves_B$agr_prc_yr_unit)
+```
+
+Anyway, I'm not so concerned with this last part about the labels showing up correctly -- I'm sure I'm just mis-specifying something or not doing something correctly. But I do think the issue above about considering if it's possible to specify the encoding argument in haven may be important for importing .dta files. Happy to help out in any way I can.
+
+Thank you also again to everyone at retroharmonize and to alexandraqn for the collaboration!
+
+## Citation
+
+### Data
+
+The World Bank. Covid-19 Related Shocks in Rural India - Rounds 1-3 (COVIDRS) 2020. Ref. IND_2020_COVIDRS_v01_M. Dataset downloaded from [\<https://microdata.worldbank.org/index.php/catalog/3830\>](https://microdata.worldbank.org/index.php/catalog/3830){.uri} on 2021-07-21.
+
+### Retroharmonize
+
+```{r}
+citation("retroharmonize")
+```
