@@ -50,6 +50,7 @@ From here, we'll roughly follow the Eurobarometer vignette.
 library(retroharmonize)
 library(dplyr)
 library(tidyr)
+library(stringr)
 ```
 
 Note that in this case there seems to be an error in reading the .dta files.
@@ -100,11 +101,6 @@ covidshocks_waves <- read_surveys(ind_covidshocks_rounds,
 
 Huh, looks like this an error from haven?
 
-```{r}
-covidshocks_waves <- read_surveys(ind_covidshocks_rounds,
-                                  .f = haven::read_dta(ind_covidshocks_rounds, encoding = "latin1"))
-```
-
 We can see from the reprex that the error message is indeed from haven, so this makes me think that maybe the encoding argument was not successfully passed here. I'm probably mis-specifying the call.
 
 ```{r}
@@ -126,6 +122,41 @@ haven::write_dta(cs_wave2, file.path(ind_dir_14, cs[3]), version = 14)
 haven::write_dta(cs_wave3, file.path(ind_dir_14, cs[5]), version = 14)
 
 ```
+Ah yes, we will have to shorten the names of variables to 32 characters or fewer so that Stata accepts them. (Apparently all of the errors are exactly 32 characters, but I'm not willing to dig into this)
+
+```{r}
+n_unique_varnames <- n_distinct(names(cs_wave3)) # store number of unique variable names
+
+long_varnames <- unique(names(cs_wave3)) %>% 
+  as_tibble() %>%
+  filter(str_length(value) >= 32) 
+
+to_change <- as.character(long_varnames$value)
+
+# cs_wave3_varnames <- names(cs_wave3) %>% 
+#   as_tibble() %>%
+#   mutate(len = str_length(value),
+#          new_name = case_when( len >= 32 ~ str_trunc(value, width = 31, side = "center", ellipsis = "_"),
+#                                TRUE      ~ value)
+#          ) %>%
+#   filter(len >= 32)
+
+cs_wave3_short <- cs_wave3 %>%
+    rename_with(.cols = all_of(to_change), ~ str_trunc(.x, width = 31, side = "center", ellipsis = "_")) 
+
+# make sure stringr didn't accidentally make two varibles the same name
+assertthat::assert_that( n_distinct(names(cs_wave3_short)) == n_unique_varnames )
+
+```
+
+Now we can export the third wave...
+
+```{r}
+haven::write_dta(cs_wave3_short, file.path(ind_dir_14, cs[5]), version = 14)
+```
+
+
+
 
 ### Read Surveys as .dta 14
 
