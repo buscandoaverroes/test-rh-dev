@@ -133,16 +133,8 @@ long_varnames <- unique(names(cs_wave3)) %>%
 
 to_change <- as.character(long_varnames$value)
 
-# cs_wave3_varnames <- names(cs_wave3) %>% 
-#   as_tibble() %>%
-#   mutate(len = str_length(value),
-#          new_name = case_when( len >= 32 ~ str_trunc(value, width = 31, side = "center", ellipsis = "_"),
-#                                TRUE      ~ value)
-#          ) %>%
-#   filter(len >= 32)
-
 cs_wave3_short <- cs_wave3 %>%
-    rename_with(.cols = all_of(to_change), ~ str_trunc(.x, width = 31, side = "center", ellipsis = "_")) 
+    rename_with(.cols = all_of(to_change), ~ str_trunc(.x, width = 31, side = "right", ellipsis = "")) 
 
 # make sure stringr didn't accidentally make two varibles the same name
 assertthat::assert_that( n_distinct(names(cs_wave3_short)) == n_unique_varnames )
@@ -186,12 +178,11 @@ It's common for coders writing for Stata to not use the extended missing values 
 
 ### Label Exploration
 
-Let's look at how the survey marks missings, do-not-respond's etc. by looking at a (simple) subset of variables.
+Let's look at how the survey marks missings, do-not-respond's etc. by looking at a (simple) subset of variables with just the rowid, a numeric and a factor variable in all three rounds.
 
 ```{r}
 to_analyze <- cs_metadata %>%
-  filter( var_name_orig %in% c("agr_prc_yr_unit", "agr_sell_lckdwn", 
-                               "con_curr_rice", "rowid")) 
+  filter( var_name_orig %in% c("demo_edu", "demo_hh_size", "rowid")) 
           
 collect_na_labels(cs_metadata)
 ```
@@ -200,15 +191,15 @@ We see there are no system NA labels for any variable at all, but, as expected, 
 
 ```{r}
 to_analyze %>% 
-  filter( grepl("unit", var_name_orig)) %>%
+  filter( grepl("edu", var_name_orig)) %>%
   collect_val_labels()
 ```
 
-in some of the data I work with, these value labels change across waves. That is, "Don't Know" may be `-999` one round and `-9` the next. So I often transform the metadata file like this for visual checks.
+in some of the data I work with, these value labels change across waves. That is, "Don't Know" may be `-999` one round and `-9` the next. So I often transform the metadata file like this for visual checks. Here's an example where -777 Half Complete is present in round 1 but not in the other two.
 
 ```{r}
-unit_table <- to_analyze %>%
-  filter( grepl("unit", var_name_orig) ) %>%
+edu_table <- to_analyze %>%
+  filter( grepl("edu", var_name_orig) ) %>%
   filter(!is.na(labels)) %>%
   select(id, labels) %>%
   unnest_longer(labels, 
@@ -217,24 +208,9 @@ unit_table <- to_analyze %>%
   pivot_wider(names_from = id, values_from = value_label) %>%
   arrange(value)
 
-unit_table
+edu_table
 ```
 
-We also see the same Missing/non-response values for the other factor variable, except the exclusion of "99 Other"
-
-```{r}
-sell_table <- to_analyze %>%
-  filter( grepl("sell", var_name_orig) ) %>%
-  filter(!is.na(labels)) %>%
-  select(id, labels) %>%
-  unnest_longer(labels, 
-                values_to = "value",
-                indices_to = "value_label") %>%
-  pivot_wider(names_from = id, values_from = value_label) %>%
-  arrange(value)
-
-sell_table
-```
 
 As I understand, a major goal of `retorharmonize` is to create a separation between values that should and should not be included in numerical calculations -- such as means.
 
@@ -256,16 +232,27 @@ merged_cs <- merge_waves(waves = covidshocks_waves_14,
 
 ### Label Functions + `harmonize_waves()`
 
-Adjusting the prototype function for "unit"
+Adjusting the prototype function for the education variable
 
 ```{r}
-harmonize_cs_unit <- function(x) {
+harmonize_cs_edu <- function(x) {
   label_list <- list(
-    from = c("^kilo", "^quin", "^mann", "^other",
-             "^Don't", "^Refused", "^Half"),
-    to = c("kilos", "quintal", "mann", "other",
-           "do_not_know", "refused", "incomplete"),
-  numeric_values = c(1, 2, 3, 4,
+    
+    from = c("^No sch(.+)", 
+             "^Class 5 or(.+)", 
+             "Class ([5-10|6 -10])", 
+             "([High school (.+)]|[Class 11-12(.+)])", 
+             "([More than (.+)]|[Higher education (.+)])",
+             "^Refused(.+)", "^Half(.+)", "^Don't(.+)"),
+    
+    to = c("No School", 
+           "Some Primary", 
+           "Some Secondary", 
+           "Secondary", 
+           "Post-Secondary",
+           "Refused", "Incomplete", "Do Not Know"),
+    
+  numeric_values = c(1, 2, 3, 4, 5,
                      99997, 99998, 99999)
   )
 
@@ -278,37 +265,16 @@ harmonize_cs_unit <- function(x) {
   )
 }
 
-
-harmonize_cs_sell <- function(x) {
-  label_list <- list(
-    from = c("^all", "^more", "^less", "^none",
-             "^Don't", "^Refused", "^Half"),
-    to = c("all", "more", "less", "none",
-           "do_not_know", "refused", "incomplete"),
-  numeric_values = c(1, 2, 3, 4,
-                     99997, 99998, 99999)
-  )
-
-  harmonize_values(
-    x,
-    harmonize_labels = label_list,
-    na_values = c("do_not_know" = 99997,
-                  "refused" = 99998,
-                  "incomplete" = 99999)
-  )
-}
 
 
 ```
 
-Not harmonizing the "sell" variable for simplicity.
+What's with this error? grepl thinks the `from` argument is a single regex expression instead of separate ones for each label.
 
 ```{r}
-harmonized_cs_waves_A <- harmonize_waves(
-  waves = lapply(merged_cs, function(x) x %>%
-                   select(-.data$agr_sell_lckdwn)),
-  .f = harmonize_cs_unit
-)
+harmonized_cs_waves_A <- harmonize_waves(waves = lapply(merged_cs, function(x) x %>%
+                                                          select(-.data$demo_hh_size)), 
+                                         .f = harmonize_cs_edu)
 ```
 
 It looks like the harmonize_cs_unit function didn't succeed in labeling the data properly. The data in the "unit" variable end up as not labelled. Can we simplify the function to get it to work?
