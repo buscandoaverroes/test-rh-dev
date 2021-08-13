@@ -123,7 +123,7 @@ haven::write_dta(cs_wave3, file.path(ind_dir_14, cs[5]), version = 14)
 
 ```
 
-Ah yes, we will have to shorten the names of variables to 32 characters or fewer so that Stata accepts them. (Apparently all of the errors are exactly 32 characters, but I'm not willing to dig into this)
+Ah yes, we will have to shorten the names of variables to 32 characters or fewer so that Stata accepts them. (Apparently all of the error cases are exactly 32 characters, but I'm not willing to dig into why this is...)
 
 ```{r}
 n_unique_varnames <- n_distinct(names(cs_wave3)) # store number of unique variable names
@@ -193,7 +193,7 @@ to_analyze %>%
   collect_val_labels()
 ```
 
-in some of the data I work with, these value labels change across waves. That is, "Don't Know" may be `-999` one round and `-9` the next. So I often transform the metadata file like this for visual checks. Here's an example where -777 Half Complete is present in round 1 but not in the other two.
+In some of the data I work with, these value labels change across waves. That is, "Don't Know" may be `-999` one round and `-9` the next. So I often transform the metadata file like this for visual checks. Here's an example where -777 Half Complete is present in round 1 but not in the other two.
 
 ```{r}
 edu_table <- to_analyze %>%
@@ -234,18 +234,18 @@ Adjusting the prototype function for the education variable
 ```{r}
 harmonize_cs_edu <- function(x) {
   label_list <- list(
-    
-    from = c("^No sch(.+)", 
-             "^Class 5 or(.+)", 
-             "Class ([5-10|6 -10])", 
-             "([High school (.+)]|[Class 11-12(.+)])", 
-             "([More than (.+)]|[Higher education (.+)])",
+  
+    from = c("^No sch(.+)",
+             "^Class 5 or(.+)",
+             "Class ([5-10|6 -10])",
+             "([(High school (.+))|(Class 11-12(.+))])",
+             "([(More than (.+))|(Higher education (.+))])",
              "^Refused(.+)", "^Half(.+)", "^Don't(.+)"),
-    
-    to = c("No School", 
-           "Some Primary", 
-           "Some Secondary", 
-           "Secondary", 
+
+    to = c("No School",
+           "Some Primary",
+           "Some Secondary",
+           "Secondary",
            "Post-Secondary",
            "Refused", "Incomplete", "Do Not Know"),
     
@@ -266,67 +266,19 @@ harmonize_cs_edu <- function(x) {
 
 ```
 
-What's with this error? grepl thinks the `from` argument is a single regex expression instead of separate ones for each label.
+Huh, with this error? grepl thinks the `from` argument is a single regex expression instead of separate ones for each label.
 
 ```{r}
-harmonized_cs_waves_A <- harmonize_waves(waves = lapply(merged_cs, function(x) x %>%
-                                                          select(-.data$demo_hh_size)), 
-                                         .f = harmonize_cs_edu)
+harmonized_cs_waves_A <- harmonize_waves(
+  waves = lapply(merged_cs, function(x) x %>% select(-.data$demo_hh_size)),
+  .f = harmonize_cs_edu)
 ```
 
-It looks like the harmonize_cs_unit function didn't succeed in labeling the data properly. The data in the "unit" variable end up as not labelled. Can we simplify the function to get it to work?
+It appears as if the error is thrown from somewhere around [here](https://github.com/rOpenGov/retroharmonize/blob/5e329cd7b443b151cc2312e30863e947f6710d19/R/harmonize_values.R#L157) in `harmonize_labels` , but I'm pretty sure this has to do with my lack of regex experience. I'm sure if I fiddled around a bit more, the code would run as expected.
 
-```{r}
-unit_labels <- to_analyze %>%
-  filter(grepl("unit", var_name_orig)) %>%
-  collect_val_labels()
+## Conclusion
 
-harmonize_cs_unit_simple <- function(x) {
-  label_list <- list(
-    from = c("Don't know", "Refused to resposnd", "Half complete",
-             "Kilos", "Quintal", "Mann", "Other"),
-    
-    to = c("do_not_know", "refused", "incomplete",
-           "kilos", "quintal", "mann", "other"),
-    
-  numeric_values = c(9997, 9998, 9999,
-                     1, 2, 3, 4)
-  )
-
-  harmonize_values(
-    x,
-    harmonize_labels = label_list,
-    na_values = c("do_not_know" = 9997,
-                  "refused" = 9998,
-                  "incomplete" = 9999)
-  )
-}
-
-```
-
-```{r}
-harmonized_cs_waves_B <- harmonize_waves(
-  waves = lapply(merged_cs, function(x) x %>%
-                   select(-.data$agr_sell_lckdwn)),
-  .f = harmonize_cs_unit_simple
-)
-```
-
-There's no warning but I can't figure out why the harmonize_wave function didn't transform the raw values -- still we have unlabeled data with the original values. I'm probably not specifying or using something correctly.
-
-Just for fun, if we look at the class of the labelled variable, I think we see that retroharmonize added it's labelled class to it.
-
-```{r}
-class(harmonized_cs_waves_B$agr_prc_yr_unit)
-```
-
-But `document_survey_item()` still finds the labels.
-
-```{r}
-document_survey_item(harmonized_cs_waves_B$agr_prc_yr_unit)
-```
-
-Anyway, I'm not so concerned with this last part about the labels showing up correctly -- I'm sure I'm just mis-specifying something or not doing something correctly. But I do think the issue above about considering if it's possible to specify the encoding argument in haven may be important for importing .dta files. Happy to help out in any way I can.
+Anyway, I'm not so concerned with this last part about the labels showing up correctly -- I'm sure I'm just mis-specifying something or not doing something correctly. But I do think the issue above about considering if it's possible to carry over the encoding argument in haven via specification in retroharmonize::read_dta may be important for importing .dta files. Happy to help out in any way I can.
 
 Thank you also again to everyone at retroharmonize and to alexandraqn for the collaboration!
 
